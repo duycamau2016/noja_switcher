@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import { nodeManager, jdkManager, portManager, vulnManager, NODE, JDK, ToolMeta } from './managers'
 import { listWithEffective, resolveTool, setManualPin, versionAtPath } from './pinStore'
+import { worstSeverity, cveIds } from './vulnFormat'
 
 /** Fired after any action that can change which version is active. */
 export type OnChanged = () => void
@@ -233,16 +234,13 @@ export class NvmPanel {
     if (version) {
       const hits = (await vulnManager.scan([version]))[version]
       if (hits && hits.length > 0) {
-        const ids = hits.flatMap((h) => h.cve).filter(Boolean)
-        const shown = ids.slice(0, 6).join(', ')
-        const more = ids.length > 6 ? `, +${ids.length - 6} more` : ''
         const proceed = 'Switch anyway'
         const choice = await vscode.window.showWarningMessage(
           `${version} has ${hits.length} known security ${hits.length === 1 ? 'advisory' : 'advisories'}.`,
           {
             modal: true,
             detail:
-              `Highest severity: ${worstSeverity(hits)}.\n${shown}${more}\n\n` +
+              `Highest severity: ${worstSeverity(hits)}.\n${cveIds(hits)}\n\n` +
               `Consider switching to a patched release instead.`,
           },
           proceed,
@@ -347,22 +345,6 @@ export class NvmPanel {
 
 function openFolder(dir: string) {
   return vscode.env.openExternal(vscode.Uri.file(dir))
-}
-
-const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, moderate: 2, low: 1 }
-
-/** Highest severity label among a version's advisories, for the warning modal. */
-function worstSeverity(vulns: { severity: string }[]): string {
-  let worst = 'unknown'
-  let rank = -1
-  for (const v of vulns) {
-    const r = SEVERITY_RANK[v.severity] ?? 0
-    if (r > rank) {
-      rank = r
-      worst = v.severity
-    }
-  }
-  return worst
 }
 
 function makeNonce(): string {

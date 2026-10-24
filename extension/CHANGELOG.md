@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1
+
+### Added
+
+- **Security badges in the tree views.** The CVE warnings from 1.4.0 (previously
+  only in the webview panel) now also appear in the **Versions** and **Install
+  New** tree views: a `⚠️ <severity> · N CVE` tag on affected Node versions,
+  a red icon, and the CVE ids in the hover tooltip.
+- **Confirmation before pinning** a Node version with known advisories from the
+  tree view (clicking a flagged version), matching the panel's switch warning.
+
 ## 1.4.0
 
 ### Added

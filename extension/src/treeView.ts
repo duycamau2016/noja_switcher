@@ -1,8 +1,10 @@
 import * as vscode from 'vscode'
 import * as path from 'path'
-import { portManager, TOOLS, ToolMeta } from './managers'
+import { portManager, vulnManager, TOOLS, ToolMeta } from './managers'
 import { describeSource, listWithEffective, resolveTool, setManualPin } from './pinStore'
 import { registerCommand, registerDisposable } from './register'
+import { worstSeverity, cveIds } from './vulnFormat'
+import type { Vulnerability, VulnMap } from '../../src/main/vulnManager'
 
 // ── Versions view ─────────────────────────────────────────────
 
@@ -29,6 +31,12 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
   private readonly _onDidChange = new vscode.EventEmitter<void>()
   readonly onDidChangeTreeData = this._onDidChange.event
 
+  // Security advisories for the installed Node versions. Filled asynchronously
+  // (getTreeItem is sync) and keyed by the version set it was scanned for, so a
+  // re-render does not re-scan and an install/uninstall does.
+  private vulns: VulnMap = {}
+  private vulnKey: string | null = null
+
   refresh() {
     this._onDidChange.fire()
   }
@@ -44,6 +52,22 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
       installed = listWithEffective(node.tool)
     } catch {
       return []
+    }
+
+    // Node-only: scan this version set once, then refresh to paint the badges.
+    if (node.tool.key === 'node') {
+      const versions = installed.map((v) => v.version)
+      const key = versions.join('|')
+      if (key !== this.vulnKey) {
+        this.vulnKey = key
+        vulnManager
+          .scan(versions)
+          .then((map) => {
+            this.vulns = map
+            this.refresh()
+          })
+          .catch(() => {})
+      }
     }
 
     return installed.map((v) => ({
@@ -95,9 +119,12 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
   private versionItem(node: Extract<VersionNode, { kind: 'version' }>): vscode.TreeItem {
     const resolved = resolveTool(node.tool)
     const pinnedHere = node.isCurrent && resolved.source !== 'global'
+    const vulns = node.tool.key === 'node' ? this.vulns[node.version] : undefined
+    const vulnerable = !!vulns?.length
 
     const item = new vscode.TreeItem(node.version, vscode.TreeItemCollapsibleState.None)
     item.description = [
+      vulnerable ? `⚠️ ${worstSeverity(vulns!)} · ${vulns!.length} CVE` : undefined,
       pinnedHere ? (resolved.source === 'file' ? resolved.file : 'pinned') : undefined,
       node.isGlobal ? 'global' : undefined,
       // "nvm current" already says it is an nvm install — don't print both.
@@ -110,6 +137,9 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
       [
         `**${node.version}**`,
         node.path,
+        vulnerable
+          ? `⚠️ **${vulns!.length} known security ${vulns!.length === 1 ? 'advisory' : 'advisories'}** (highest: ${worstSeverity(vulns!)})\n\n${cveIds(vulns!)}`
+          : '',
         pinnedHere ? `_Pinned for this workspace (${describeSource(resolved)})._` : '',
         node.isGlobal ? '_Also the machine-wide default._' : '',
         node.origin === 'nvm'
@@ -124,7 +154,11 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
 
     item.iconPath = new vscode.ThemeIcon(
       node.isCurrent ? (pinnedHere ? 'pinned' : 'pass-filled') : node.isGlobal ? 'circle-filled' : 'circle-large-outline',
-      node.isCurrent ? new vscode.ThemeColor('charts.green') : undefined,
+      node.isCurrent
+        ? new vscode.ThemeColor('charts.green')
+        : vulnerable
+          ? new vscode.ThemeColor('charts.red')
+          : undefined,
     )
 
     // Uninstall is only offered where it can succeed and where it would not rip
@@ -160,6 +194,8 @@ type RemoteNode =
       lts: string | false
       date: string
       installed: boolean
+      /** Security advisories affecting this release (Node only). */
+      vulns?: Vulnerability[]
     }
   | { kind: 'error'; tool: ToolMeta; message: string }
 
@@ -195,14 +231,27 @@ export class InstallProvider implements vscode.TreeDataProvider<RemoteNode> {
         Promise.resolve(node.tool.vm.listInstalled()),
       ])
       const have = new Set(installed.filter((v) => !v.external).map((v) => v.version))
-      children = remote.map((r) => ({
+      const remoteNodes = remote.map((r) => ({
         kind: 'remote' as const,
         tool: node.tool,
         version: r.version,
         lts: r.lts,
         date: r.date,
         installed: have.has(r.version),
+        vulns: undefined as Vulnerability[] | undefined,
       }))
+
+      // Node-only: attach advisories so each release can show a CVE badge.
+      // Non-fatal — a scan failure just leaves the list unbadged.
+      if (node.tool.key === 'node') {
+        try {
+          const map = await vulnManager.scan(remoteNodes.map((c) => c.version))
+          for (const c of remoteNodes) c.vulns = map[c.version]
+        } catch {
+          // offline / rate-limited: show the list without badges
+        }
+      }
+      children = remoteNodes
     } catch (err: unknown) {
       // Offline or a rate-limited API must show *why*, not an empty list.
       children = [
@@ -246,20 +295,34 @@ export class InstallProvider implements vscode.TreeDataProvider<RemoteNode> {
     }
 
     const item = new vscode.TreeItem(node.version, vscode.TreeItemCollapsibleState.None)
-    const tags = [node.lts ? `LTS ${node.lts}` : undefined, node.date].filter(Boolean)
+    const vulnerable = !!node.vulns?.length
+    const tags = [
+      vulnerable ? `⚠️ ${worstSeverity(node.vulns!)} · ${node.vulns!.length} CVE` : undefined,
+      node.lts ? `LTS ${node.lts}` : undefined,
+      node.date,
+    ].filter(Boolean)
     item.description = node.installed ? `installed · ${tags.join(' · ')}` : tags.join(' · ')
     item.tooltip = new vscode.MarkdownString(
       [
         `**${node.version}**`,
+        vulnerable
+          ? `⚠️ **${node.vulns!.length} known security ${node.vulns!.length === 1 ? 'advisory' : 'advisories'}** (highest: ${worstSeverity(node.vulns!)})\n\n${cveIds(node.vulns!)}`
+          : '',
         node.lts ? `LTS: ${node.lts}` : 'Current release (not LTS)',
         `Released: ${node.date || 'unknown'}`,
         '',
         node.installed ? '_Already installed._' : `_Click to download and install from ${node.tool.source}._`,
-      ].join('\n\n'),
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
     )
     item.iconPath = new vscode.ThemeIcon(
       node.installed ? 'pass-filled' : 'cloud-download',
-      node.installed ? new vscode.ThemeColor('charts.green') : undefined,
+      node.installed
+        ? new vscode.ThemeColor('charts.green')
+        : vulnerable
+          ? new vscode.ThemeColor('charts.red')
+          : undefined,
     )
     item.contextValue = node.installed ? 'nvmRemote-installed' : 'nvmRemote'
 
@@ -408,6 +471,22 @@ export function registerTreeViews(context: vscode.ExtensionContext, onChanged: (
   // shared junction, so a second window on another repo is unaffected.
   registerCommand(context, 'nodeversions.pinVersion', async (node: VersionNode) => {
     if (!node || node.kind !== 'version') return
+    // Warn before pinning a Node version with known advisories (default click action).
+    if (node.tool.key === 'node') {
+      const hits = (await vulnManager.scan([node.version]))[node.version]
+      if (hits?.length) {
+        const proceed = 'Pin anyway'
+        const choice = await vscode.window.showWarningMessage(
+          `${node.version} has ${hits.length} known security ${hits.length === 1 ? 'advisory' : 'advisories'}.`,
+          {
+            modal: true,
+            detail: `Highest severity: ${worstSeverity(hits)}.\n${cveIds(hits)}\n\nConsider a patched release instead.`,
+          },
+          proceed,
+        )
+        if (choice !== proceed) return
+      }
+    }
     // Record the path, not just the version: the same version string can name
     // both a managed install and an nvm one.
     await setManualPin(node.tool.key, { version: node.version, path: node.path })
