@@ -1,6 +1,6 @@
 // Browser dev mock — injected when window.nodevm / window.jdkvm are not
 // available (running in a browser, not Electron)
-import type { InstalledVersion, RemoteVersion, ActionResult, PortInfo } from './types'
+import type { InstalledVersion, RemoteVersion, ActionResult, PortInfo, VulnMap } from './types'
 
 const mockPorts: PortInfo[] = [
   { port: 3000, pid: 11234, processName: 'node.exe', runtime: 'node', address: '0.0.0.0', protocol: 'TCP' },
@@ -104,6 +104,23 @@ export function injectBrowserMock() {
       ...makeMockVm(mockNodeInstalled, mockNodeRemote, 'v22.13.0'),
       setupPath: async () => ({ success: true }),
       checkPath: async () => false,
+      // Flag a couple of old versions so the advisory UI is visible in dev preview.
+      scanVulnerabilities: async (versions: string[]): Promise<VulnMap> => {
+        const map: VulnMap = {}
+        for (const v of versions) {
+          if (v === 'v18.20.5' || v === 'v16.20.2') {
+            map[v] = [
+              {
+                cve: ['CVE-2025-00000'],
+                severity: 'high',
+                overview: 'Example advisory shown in browser dev preview only.',
+                ref: 'https://nodejs.org/en/blog/vulnerability/',
+              },
+            ]
+          }
+        }
+        return map
+      },
     }
     console.info('[mock] window.nodevm mock injected for browser dev preview')
   }

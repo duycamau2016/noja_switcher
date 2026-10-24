@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SecurityAudit } from './SecurityAudit'
 
 const IS_WIN = window.platform?.os === 'win32'
 
@@ -34,6 +35,7 @@ export function SettingsTab() {
     // macOS/Linux: PATH lives in a single shell profile (~/.zshrc)
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <SecurityAudit />
         <div className="path-hint" style={{ borderColor: profileOk ? 'var(--accent)' : 'var(--warning)' }}>
           <strong style={{ color: 'var(--text)' }}>Shell PATH</strong>
           <br /><br />
@@ -69,6 +71,8 @@ export function SettingsTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+      <SecurityAudit />
 
       {/* Overall status */}
       {allDone && (

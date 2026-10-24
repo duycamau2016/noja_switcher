@@ -5,10 +5,12 @@
 import { NodeManager } from '../../src/main/nodeManager'
 import { JdkManager } from '../../src/main/jdkManager'
 import { PortManager } from '../../src/main/portManager'
+import { VulnManager } from '../../src/main/vulnManager'
 
 export const nodeManager = new NodeManager()
 export const jdkManager = new JdkManager()
 export const portManager = new PortManager()
+export const vulnManager = new VulnManager()
 
 export type Tool = 'node' | 'java'
 

@@ -22,6 +22,7 @@ electron_1.contextBridge.exposeInMainWorld('nodevm', {
     checkPath: () => electron_1.ipcRenderer.invoke('nvm:check-path'),
     setupProfile: () => electron_1.ipcRenderer.invoke('nvm:setup-profile'),
     checkProfile: () => electron_1.ipcRenderer.invoke('nvm:check-profile'),
+    scanVulnerabilities: (versions) => electron_1.ipcRenderer.invoke('nvm:scan-vuln', versions),
 });
 electron_1.contextBridge.exposeInMainWorld('jdkvm', {
     listInstalled: () => electron_1.ipcRenderer.invoke('jvm:list-installed'),

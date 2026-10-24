@@ -22,6 +22,18 @@ export interface ActionResult {
   error?: string
 }
 
+// ── Security advisories (Node only) ───────────────────────────
+export interface Vulnerability {
+  cve: string[]
+  /** 'critical' | 'high' | 'medium' | 'low' | 'unknown' (lower-cased from the DB). */
+  severity: string
+  overview?: string
+  ref?: string
+}
+
+/** Keyed by version string (e.g. "v22.13.0"). Safe versions are omitted. */
+export type VulnMap = Record<string, Vulnerability[]>
+
 // Common surface shared by the Node and JDK managers — used by the
 // generic Install / Installed tabs so they work for either tool.
 export interface VmApi {
@@ -42,6 +54,8 @@ export interface NodeApi extends VmApi {
   checkPath: () => Promise<boolean>
   setupProfile: () => Promise<ActionResult>
   checkProfile: () => Promise<boolean>
+  /** Check version strings against the Node.js security DB. Node-only. */
+  scanVulnerabilities: (versions: string[]) => Promise<VulnMap>
 }
 
 export interface JdkApi extends VmApi {

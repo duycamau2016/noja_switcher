@@ -1,31 +1,38 @@
 import { useEffect, useState } from 'react'
-import type { RemoteVersion, InstalledVersion, VmApi } from '../types'
+import type { RemoteVersion, InstalledVersion, VmApi, VulnMap } from '../types'
+import { VulnBadge } from './VulnBadge'
 
 interface Props {
   api: VmApi
   sourceLabel: string
   onInstalled: () => void
   addToast: (msg: string, type: 'success' | 'error') => void
+  /** Node-only security scan. Undefined for JDK → no advisory badges. */
+  scanVuln?: (versions: string[]) => Promise<VulnMap>
 }
 
-export function InstallTab({ api, sourceLabel, onInstalled, addToast }: Props) {
+export function InstallTab({ api, sourceLabel, onInstalled, addToast, scanVuln }: Props) {
   const [remote, setRemote] = useState<RemoteVersion[]>([])
   const [installed, setInstalled] = useState<InstalledVersion[]>([])
+  const [vulns, setVulns] = useState<VulnMap>({})
   const [loading, setLoading] = useState(true)
   const [installing, setInstalling] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
 
   useEffect(() => {
     setLoading(true)
+    setVulns({})
     Promise.all([api.listRemote(), api.listInstalled()]).then(([r, i]) => {
       setRemote(r)
       setInstalled(i)
       setLoading(false)
+      // Fire-and-forget: badges fill in once the scan returns, never blocking the list.
+      scanVuln?.(r.map((v) => v.version)).then(setVulns).catch(() => {})
     })
 
     api.onInstallProgress(({ progress: p }) => setProgress(p))
     return () => api.removeInstallProgressListener()
-  }, [api])
+  }, [api, scanVuln])
 
   const isInstalled = (version: string) => installed.some((v) => v.version === version)
 
@@ -63,6 +70,7 @@ export function InstallTab({ api, sourceLabel, onInstalled, addToast }: Props) {
             <div className="version-info">
               <div className="version-name">{v.version}</div>
               {v.lts && <div className="version-badge lts">LTS · {v.lts}</div>}
+              <VulnBadge vulns={vulns[v.version]} />
               <div className="version-meta">{v.date}</div>
               {busy && (
                 <div className="progress-wrap">

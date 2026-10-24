@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0
+
+### Added
+
+- **Security advisory scanning.** Installed and available Node versions are
+  checked against the official [Node.js Security WG database](https://github.com/nodejs/security-wg/tree/main/vuln),
+  and any version with known CVEs gets a red ⚠️ badge (hover for the CVE ids,
+  severity and summary). The database is fetched from GitHub and cached under
+  `~/.nodevm/vuln-cache.json`, refreshed at most once every 24h, so scans are
+  offline-friendly and never block the UI.
+- **Warning before switching to a vulnerable version.** Using a Node version with
+  known advisories raises a native confirmation modal first (highest severity +
+  the CVE ids). Cancelling leaves the active version unchanged.
+- **Security audit** — a *Scan installed versions* button in the Settings tab
+  reports how many installed Node versions are affected, with the worst severity
+  per version. Node-only; JDK is unaffected.
+
 ## 1.3.0 — unreleased
 
 ### Added

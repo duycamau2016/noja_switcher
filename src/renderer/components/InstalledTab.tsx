@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { InstalledVersion, VmApi } from '../types'
+import type { InstalledVersion, VmApi, VulnMap } from '../types'
+import { VulnBadge } from './VulnBadge'
 
 interface Props {
   api: VmApi
@@ -7,22 +8,37 @@ interface Props {
   refreshKey: number
   onRefresh: () => void
   addToast: (msg: string, type: 'success' | 'error') => void
+  /** Node-only security scan. Undefined for JDK → no advisory badges. */
+  scanVuln?: (versions: string[]) => Promise<VulnMap>
 }
 
-export function InstalledTab({ api, noun, refreshKey, onRefresh, addToast }: Props) {
+export function InstalledTab({ api, noun, refreshKey, onRefresh, addToast, scanVuln }: Props) {
   const [versions, setVersions] = useState<InstalledVersion[]>([])
+  const [vulns, setVulns] = useState<VulnMap>({})
   const [loading, setLoading] = useState(true)
   const [busyPath, setBusyPath] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
+    setVulns({})
     api.listInstalled().then((list) => {
       setVersions(list)
       setLoading(false)
+      // Fire-and-forget: badges fill in once the scan returns, never blocking the list.
+      scanVuln?.(list.map((v) => v.version)).then(setVulns).catch(() => {})
     })
-  }, [api, refreshKey])
+  }, [api, refreshKey, scanVuln])
 
   const handleUse = async (v: InstalledVersion) => {
+    const flagged = vulns[v.version]
+    if (flagged?.length) {
+      const ids = flagged.flatMap((f) => f.cve).join(', ') || 'known issues'
+      const ok = confirm(
+        `${v.version} has ${flagged.length} known security ${flagged.length === 1 ? 'advisory' : 'advisories'} (${ids}).\n\n` +
+          `Switch to it anyway?`,
+      )
+      if (!ok) return
+    }
     setBusyPath(v.path)
     const res = await api.use(v.path)
     setBusyPath(null)
@@ -72,6 +88,7 @@ export function InstalledTab({ api, noun, refreshKey, onRefresh, addToast }: Pro
           <div className="version-info">
             <div className="version-name">{v.version}</div>
             {v.isCurrent && <div className="version-badge">● active</div>}
+            <VulnBadge vulns={vulns[v.version]} />
             {v.external && (
               <div
                 className="version-badge system"

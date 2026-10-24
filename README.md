@@ -32,6 +32,13 @@ A GUI to install, switch and manage multiple **Node.js** and **JDK** versions on
 - **LTS labels** on the "Install New" list, and only the latest release of each major version is shown to keep the list short.
 - **JDK detection is compiler-aware** — a `javac` binary is required, so plain JREs are not listed as JDKs.
 
+### Security advisory scanning (Node)
+
+- **Known-CVE badges.** Installed and available Node versions are checked against the official [Node.js Security WG database](https://github.com/nodejs/security-wg/tree/main/vuln); any version with published advisories gets a red ⚠️ badge — hover for the CVE ids, severity and summary.
+- **Warning before switching** to a version with known advisories (highest severity + CVE ids); cancelling leaves the active version unchanged.
+- **Security audit** — a *Scan installed versions* button in the **Settings** tab reports how many installed Node versions are affected.
+- The database is fetched from GitHub and cached at `~/.nodevm/vuln-cache.json` (refreshed at most once per 24h), so scans work offline and never block the UI. JDK is unaffected.
+
 ### Listening-port monitor
 
 - Lists every **TCP port in LISTENING state** owned by a Node or Java process.
@@ -82,6 +89,7 @@ The same engine, embedded in the editor — install and switch Node/JDK versions
 - **Command Palette Quick Picks** — `Switch Node Version`, `Switch JDK Version`, and `List Listening Ports` without opening the panel.
 - **Terminal integration** — the active Node/JDK is prepended to `PATH` (and `JAVA_HOME` set) for **newly opened** integrated terminals. Terminals already open keep their original environment; open a new one after switching. Toggle with `nodeversions.autoUpdateTerminalEnv`.
 - **Status bar** — shows the active Node and JDK version; click to open the panel. Toggle with `nodeversions.showStatusBar`.
+- **Security advisory scanning** — Node versions with known CVEs are badged in the panel, switching to one prompts a confirmation, and the Settings tab has a *Scan installed versions* audit button (see [Security advisory scanning](#security-advisory-scanning-node) above).
 - Long installs report to VS Code's notification progress area.
 - Machine-wide `PATH` / `JAVA_HOME` edits require an explicit confirmation dialog (they are not needed for the integrated terminal, which works out of the box).
 - Runs as a `workspace` extension, so in **Remote-SSH / WSL / Dev Containers** it manages the **remote** machine's versions.

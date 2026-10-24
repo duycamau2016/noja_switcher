@@ -4,11 +4,13 @@ import { autoUpdater } from 'electron-updater'
 import { NodeManager } from './nodeManager'
 import { JdkManager } from './jdkManager'
 import { PortManager } from './portManager'
+import { VulnManager } from './vulnManager'
 
 let win: BrowserWindow | null = null
 const nodeManager = new NodeManager()
 const jdkManager = new JdkManager()
 const portManager = new PortManager()
+const vulnManager = new VulnManager()
 
 function createWindow() {
   win = new BrowserWindow({
@@ -130,6 +132,9 @@ ipcMain.handle('nvm:check-path', () => nodeManager.isPathConfigured())
 ipcMain.handle('nvm:setup-profile', () => nodeManager.setupProfile())
 
 ipcMain.handle('nvm:check-profile', () => nodeManager.isProfileConfigured())
+
+// Security advisories for Node versions (official Node.js Security WG DB, cached 24h).
+ipcMain.handle('nvm:scan-vuln', (_e, versions: string[]) => vulnManager.scan(versions))
 
 // ── JDK (Java) IPC handlers ───────────────────────────────────
 

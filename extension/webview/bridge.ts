@@ -122,6 +122,7 @@ window.nodevm = {
   checkPath: () => invoke('nvm:check-path'),
   setupProfile: () => invoke('nvm:setup-profile'),
   checkProfile: () => invoke('nvm:check-profile'),
+  scanVulnerabilities: (versions: string[]) => invoke('nvm:scan-vuln', versions),
 } as NodeApi
 
 window.jdkvm = {

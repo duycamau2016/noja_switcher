@@ -9,10 +9,12 @@ const electron_updater_1 = require("electron-updater");
 const nodeManager_1 = require("./nodeManager");
 const jdkManager_1 = require("./jdkManager");
 const portManager_1 = require("./portManager");
+const vulnManager_1 = require("./vulnManager");
 let win = null;
 const nodeManager = new nodeManager_1.NodeManager();
 const jdkManager = new jdkManager_1.JdkManager();
 const portManager = new portManager_1.PortManager();
+const vulnManager = new vulnManager_1.VulnManager();
 function createWindow() {
     win = new electron_1.BrowserWindow({
         width: 900,
@@ -118,6 +120,8 @@ electron_1.ipcMain.handle('nvm:setup-path', () => nodeManager.setupPath());
 electron_1.ipcMain.handle('nvm:check-path', () => nodeManager.isPathConfigured());
 electron_1.ipcMain.handle('nvm:setup-profile', () => nodeManager.setupProfile());
 electron_1.ipcMain.handle('nvm:check-profile', () => nodeManager.isProfileConfigured());
+// Security advisories for Node versions (official Node.js Security WG DB, cached 24h).
+electron_1.ipcMain.handle('nvm:scan-vuln', (_e, versions) => vulnManager.scan(versions));
 // ── JDK (Java) IPC handlers ───────────────────────────────────
 electron_1.ipcMain.handle('jvm:list-installed', () => jdkManager.listInstalled());
 electron_1.ipcMain.handle('jvm:list-remote', () => jdkManager.listRemote());

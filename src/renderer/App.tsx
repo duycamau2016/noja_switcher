@@ -30,6 +30,9 @@ export default function App() {
 
   const api = tool === 'node' ? window.nodevm : window.jdkvm
   const meta = TOOLS[tool]
+  // Security scanning only applies to Node — the JDK path leaves this undefined,
+  // so the shared tab components render no advisory badges for Java.
+  const scanVuln = tool === 'node' ? window.nodevm.scanVulnerabilities : undefined
 
   const refresh = useCallback(() => {
     setRefreshKey((k) => k + 1)
@@ -102,10 +105,18 @@ export default function App() {
             refreshKey={refreshKey}
             onRefresh={refresh}
             addToast={addToast}
+            scanVuln={scanVuln}
           />
         )}
         {tab === 'install' && (
-          <InstallTab key={tool} api={api} sourceLabel={meta.source} onInstalled={refresh} addToast={addToast} />
+          <InstallTab
+            key={tool}
+            api={api}
+            sourceLabel={meta.source}
+            onInstalled={refresh}
+            addToast={addToast}
+            scanVuln={scanVuln}
+          />
         )}
         {tab === 'ports' && <PortsTab addToast={addToast} />}
         {tab === 'settings' && (

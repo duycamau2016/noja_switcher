@@ -183,6 +183,12 @@ body {
 .version-badge.node { background: var(--accent-dim); color: var(--accent); }
 .version-badge.java { background: #3a2a1e; color: #fb923c; }
 
+/* Security advisory badge — red by default, amber for lower severities. */
+.version-badge.vuln { background: #3a1e1e; color: var(--danger); cursor: help; text-transform: capitalize; }
+.version-badge.vuln.medium,
+.version-badge.vuln.moderate,
+.version-badge.vuln.low { background: #3a2f1e; color: var(--warning); }
+
 /* ── Ports toolbar ────────────────────────────────────────── */
 .ports-toolbar {
   display: flex;

@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('nodevm', {
   checkPath: () => ipcRenderer.invoke('nvm:check-path'),
   setupProfile: () => ipcRenderer.invoke('nvm:setup-profile'),
   checkProfile: () => ipcRenderer.invoke('nvm:check-profile'),
+  scanVulnerabilities: (versions: string[]) => ipcRenderer.invoke('nvm:scan-vuln', versions),
 })
 
 contextBridge.exposeInMainWorld('jdkvm', {

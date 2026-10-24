@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { nodeManager, jdkManager, portManager, NODE, JDK, ToolMeta } from './managers'
+import { nodeManager, jdkManager, portManager, vulnManager, NODE, JDK, ToolMeta } from './managers'
 import { listWithEffective, resolveTool, setManualPin, versionAtPath } from './pinStore'
 
 /** Fired after any action that can change which version is active. */
@@ -120,7 +120,7 @@ export class NvmPanel {
     'nvm:list-installed': () => listWithEffective(NODE),
     'nvm:list-remote': () => nodeManager.listRemote(),
     'nvm:current': () => resolveTool(NODE).version,
-    'nvm:use': (target: string) => this.pin(NODE, target),
+    'nvm:use': (target: string) => this.useNode(target),
     'nvm:install': (version: string) =>
       this.withProgress(`Installing Node ${version}`, (report) =>
         nodeManager.install(version, (progress) => {
@@ -151,6 +151,8 @@ export class NvmPanel {
         () => nodeManager.setupProfile(),
       ),
     'nvm:check-profile': () => nodeManager.isProfileConfigured(),
+    // Non-destructive, non-mutating — a plain pass-through like check-path.
+    'nvm:scan-vuln': (versions: string[]) => vulnManager.scan(versions),
 
     // ── JDK ──
     'jvm:list-installed': () => listWithEffective(JDK),
@@ -217,6 +219,38 @@ export class NvmPanel {
     await setManualPin(tool.key, { version, path: target })
     this.onChanged()
     return { success: true }
+  }
+
+  /**
+   * Node "Use this version", but first warn if the target has known security
+   * advisories. The webview's confirm() is stubbed to `true` (sandbox has no
+   * `allow-modals`), so — like the destructive actions — the real prompt is a
+   * native VS Code modal raised here. A DB lookup failure is non-fatal: the
+   * switch proceeds silently, matching scan()'s fail-open behaviour.
+   */
+  private async useNode(target: string): Promise<{ success: boolean; error?: string }> {
+    const version = versionAtPath(NODE, target)
+    if (version) {
+      const hits = (await vulnManager.scan([version]))[version]
+      if (hits && hits.length > 0) {
+        const ids = hits.flatMap((h) => h.cve).filter(Boolean)
+        const shown = ids.slice(0, 6).join(', ')
+        const more = ids.length > 6 ? `, +${ids.length - 6} more` : ''
+        const proceed = 'Switch anyway'
+        const choice = await vscode.window.showWarningMessage(
+          `${version} has ${hits.length} known security ${hits.length === 1 ? 'advisory' : 'advisories'}.`,
+          {
+            modal: true,
+            detail:
+              `Highest severity: ${worstSeverity(hits)}.\n${shown}${more}\n\n` +
+              `Consider switching to a patched release instead.`,
+          },
+          proceed,
+        )
+        if (choice !== proceed) return { success: false, error: 'Cancelled.' }
+      }
+    }
+    return this.pin(NODE, target)
   }
 
   /** Refresh the status bar / terminal env after a result that may have switched versions. */
@@ -313,6 +347,22 @@ export class NvmPanel {
 
 function openFolder(dir: string) {
   return vscode.env.openExternal(vscode.Uri.file(dir))
+}
+
+const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, moderate: 2, low: 1 }
+
+/** Highest severity label among a version's advisories, for the warning modal. */
+function worstSeverity(vulns: { severity: string }[]): string {
+  let worst = 'unknown'
+  let rank = -1
+  for (const v of vulns) {
+    const r = SEVERITY_RANK[v.severity] ?? 0
+    if (r > rank) {
+      rank = r
+      worst = v.severity
+    }
+  }
+  return worst
 }
 
 function makeNonce(): string {
