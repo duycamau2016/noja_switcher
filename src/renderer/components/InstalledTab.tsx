@@ -30,11 +30,12 @@ export function InstalledTab({ api, noun, refreshKey, onRefresh, addToast, scanV
   }, [api, refreshKey, scanVuln])
 
   const handleUse = async (v: InstalledVersion) => {
-    const flagged = vulns[v.version]
-    if (flagged?.length) {
-      const ids = flagged.flatMap((f) => f.cve).join(', ') || 'known issues'
+    // EOL alone only shows a badge — only an active CVE prompts a confirmation.
+    const cves = (vulns[v.version] ?? []).filter((f) => f.kind !== 'eol')
+    if (cves.length) {
+      const ids = cves.flatMap((f) => f.cve).join(', ') || 'known issues'
       const ok = confirm(
-        `${v.version} has ${flagged.length} known security ${flagged.length === 1 ? 'advisory' : 'advisories'} (${ids}).\n\n` +
+        `${v.version} has ${cves.length} known security ${cves.length === 1 ? 'advisory' : 'advisories'} (${ids}).\n\n` +
           `Switch to it anyway?`,
       )
       if (!ok) return

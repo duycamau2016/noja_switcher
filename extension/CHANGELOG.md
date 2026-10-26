@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.3
+
+### Added
+
+- **End-of-life warnings.** Node versions whose major line is past its scheduled
+  end-of-life (from the official Node.js release schedule) are now flagged with
+  an `EOL` badge — e.g. Node 8, 14, 16, 18, 20. This closes a blind spot in the
+  CVE scan: the last release of an EOL line (such as v8.17.0) reports zero CVEs
+  not because it is safe, but because the security database stops tracking a line
+  once it is unsupported. EOL shows as a distinct violet `⛔ EOL` badge, separate
+  from the red `⚠️` CVE badge, so the two read differently when both apply. EOL is
+  informational only — it never blocks a switch with a prompt; only an active CVE
+  or a project mismatch raises a confirmation.
+
 ## 1.4.2
 
 ### Added
@@ -16,6 +30,11 @@
   range matches nothing installed, the Versions view shows an *Install a version
   for "&lt;range&gt;"* item; clicking it downloads the newest release that
   satisfies the range and the workspace picks it up.
+- **Warns when you pick a mismatched version.** Switching or pinning a Node
+  version that does not satisfy the workspace's declared range (version file or
+  `package.json` engines) now asks for confirmation first. Note a manual pin
+  keeps overriding the declaration until you *Unpin Workspace* — the warning
+  makes that override explicit.
 
 ## 1.4.1
 

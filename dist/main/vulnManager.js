@@ -12,41 +12,51 @@ const semver_1 = __importDefault(require("semver"));
 /** The official Node.js core vulnerability database, auto-synced from NVD by the
  *  Node.js Security WG. One JSON object keyed by numeric id per advisory. */
 const DB_URL = 'https://raw.githubusercontent.com/nodejs/security-wg/main/vuln/core/index.json';
-/** How long a downloaded copy of the DB stays fresh before we re-fetch. */
+/** The official Node.js release schedule — `end` dates mark when a major line
+ *  stops receiving security support. Used to flag EOL versions, which the CVE DB
+ *  above reports as "clean" because it only tracks supported lines. */
+const SCHEDULE_URL = 'https://raw.githubusercontent.com/nodejs/Release/main/schedule.json';
+/** How long a downloaded copy stays fresh before we re-fetch. */
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 class VulnManager {
     constructor() {
-        /** In-memory copy so repeated scans in one session don't re-read/parse the file. */
-        this.memo = null;
+        /** In-memory copies so repeated scans in one session don't re-read/parse files. */
+        this.dbMemo = null;
+        this.scheduleMemo = null;
         // Reuse the ~/.nodevm dir the version manager already owns — no new store needed.
-        this.cacheFile = path_1.default.join(os_1.default.homedir(), '.nodevm', 'vuln-cache.json');
+        const dir = path_1.default.join(os_1.default.homedir(), '.nodevm');
+        this.cacheFile = path_1.default.join(dir, 'vuln-cache.json');
+        this.scheduleCacheFile = path_1.default.join(dir, 'eol-cache.json');
     }
     /**
-     * Scan a set of version strings against the DB. Never throws: on a network
-     * failure with no usable cache it returns {} so the UI simply shows no
-     * badges rather than breaking the tab. Absence of a badge means "no known
-     * advisory", which is also the honest answer when the scan couldn't run.
+     * Scan version strings for security advisories and end-of-life status. Never
+     * throws: both data sources are best-effort, so a network failure with no
+     * cache simply yields no badges for that source rather than breaking the UI.
      */
     async scan(versions) {
-        let db;
-        try {
-            db = await this._getDb();
-        }
-        catch (e) {
-            console.warn('[vuln] scan skipped — DB unavailable:', String(e));
+        const db = await this._getDb().catch((e) => {
+            console.warn('[vuln] CVE DB unavailable:', String(e));
+            return [];
+        });
+        const schedule = await this._getSchedule().catch((e) => {
+            console.warn('[vuln] EOL schedule unavailable:', String(e));
             return {};
-        }
+        });
         const map = {};
         for (const ver of versions) {
-            const hits = db.filter((e) => this._affects(ver, e));
-            if (hits.length > 0) {
-                map[ver] = hits.map((e) => ({
-                    cve: e.cve ?? [],
-                    severity: (e.severity ?? 'unknown').toLowerCase(),
-                    overview: e.overview ?? e.description,
-                    ref: e.ref,
-                }));
-            }
+            const cves = db
+                .filter((e) => this._affects(ver, e))
+                .map((e) => ({
+                kind: 'cve',
+                cve: e.cve ?? [],
+                severity: (e.severity ?? 'unknown').toLowerCase(),
+                overview: e.overview ?? e.description,
+                ref: e.ref,
+            }));
+            const eol = this._eolEntry(ver, schedule);
+            const all = eol ? [eol, ...cves] : cves;
+            if (all.length > 0)
+                map[ver] = all;
         }
         return map;
     }
@@ -78,61 +88,108 @@ class VulnManager {
             return false;
         }
     }
-    /** Fresh-enough cache, else fetch and rewrite it. Falls back to a stale cache
-     *  when the network is down; only throws when there is nothing usable at all. */
+    /**
+     * A synthetic "advisory" when `version`'s major line is past its scheduled
+     * end-of-life, or null. This catches the CVE DB's blind spot: the last release
+     * of an EOL major (e.g. v8.17.0) shows zero CVEs — not because it is safe, but
+     * because the DB stops tracking a line once it is unsupported.
+     */
+    _eolEntry(version, schedule) {
+        const coerced = semver_1.default.coerce(version.replace(/^v/, ''));
+        if (!coerced)
+            return null;
+        const entry = schedule[`v${coerced.major}`];
+        if (!entry?.end)
+            return null;
+        const end = Date.parse(entry.end);
+        if (Number.isNaN(end) || Date.now() <= end)
+            return null; // still supported
+        const name = entry.codename ? ` "${entry.codename}"` : '';
+        return {
+            kind: 'eol',
+            cve: [],
+            severity: 'critical',
+            overview: `Node ${coerced.major}${name} reached end-of-life on ${entry.end} and no longer ` +
+                `receives security updates. Upgrade to a supported release.`,
+            ref: 'https://nodejs.org/en/about/previous-releases',
+        };
+    }
+    // ── CVE database ──────────────────────────────────────────────
     async _getDb() {
-        if (this.memo)
-            return this.memo;
-        const cached = this._readCache();
+        if (this.dbMemo)
+            return this.dbMemo;
+        const cached = this._readCache(this.cacheFile);
         if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-            this.memo = cached.data;
+            this.dbMemo = cached.data;
             return cached.data;
         }
         try {
-            const data = await this._fetch();
-            this._writeCache({ fetchedAt: Date.now(), data });
-            this.memo = data;
+            const json = await this._fetch(DB_URL);
+            const data = Object.values(json);
+            this._writeCache(this.cacheFile, { fetchedAt: Date.now(), data });
+            this.dbMemo = data;
             return data;
         }
         catch (e) {
             if (cached) {
-                // Network failed but we have an older copy — stale beats nothing.
-                console.warn('[vuln] using stale cache, refresh failed:', String(e));
-                this.memo = cached.data;
+                console.warn('[vuln] using stale CVE cache, refresh failed:', String(e));
+                this.dbMemo = cached.data;
                 return cached.data;
             }
             throw e;
         }
     }
-    _readCache() {
+    // ── EOL schedule ──────────────────────────────────────────────
+    async _getSchedule() {
+        if (this.scheduleMemo)
+            return this.scheduleMemo;
+        const cached = this._readCache(this.scheduleCacheFile);
+        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+            this.scheduleMemo = cached.data;
+            return cached.data;
+        }
         try {
-            const raw = fs_1.default.readFileSync(this.cacheFile, 'utf8');
-            const parsed = JSON.parse(raw);
-            if (parsed && Array.isArray(parsed.data) && typeof parsed.fetchedAt === 'number') {
-                return parsed;
+            const data = (await this._fetch(SCHEDULE_URL));
+            this._writeCache(this.scheduleCacheFile, { fetchedAt: Date.now(), data });
+            this.scheduleMemo = data;
+            return data;
+        }
+        catch (e) {
+            if (cached) {
+                console.warn('[vuln] using stale EOL cache, refresh failed:', String(e));
+                this.scheduleMemo = cached.data;
+                return cached.data;
             }
+            throw e;
+        }
+    }
+    // ── Shared cache + fetch ──────────────────────────────────────
+    _readCache(file) {
+        try {
+            const parsed = JSON.parse(fs_1.default.readFileSync(file, 'utf8'));
+            if (parsed && typeof parsed.fetchedAt === 'number' && parsed.data != null)
+                return parsed;
         }
         catch {
             // no cache yet, or unreadable/corrupt
         }
         return null;
     }
-    _writeCache(cache) {
+    _writeCache(file, cache) {
         try {
-            fs_1.default.mkdirSync(path_1.default.dirname(this.cacheFile), { recursive: true });
-            fs_1.default.writeFileSync(this.cacheFile, JSON.stringify(cache), 'utf8');
+            fs_1.default.mkdirSync(path_1.default.dirname(file), { recursive: true });
+            fs_1.default.writeFileSync(file, JSON.stringify(cache), 'utf8');
         }
         catch (e) {
             // A read-only home is non-fatal: the scan still works this session via memo.
             console.warn('[vuln] could not write cache:', String(e));
         }
     }
-    /** Download the DB and flatten its numeric-keyed object into an array. */
-    _fetch(url = DB_URL) {
+    /** Download and parse a JSON document, following GitHub's occasional redirects. */
+    _fetch(url) {
         return new Promise((resolve, reject) => {
             https_1.default
                 .get(url, { headers: { 'User-Agent': 'nodeversions' } }, (res) => {
-                // Follow redirects (GitHub raw occasionally 301s to a CDN host).
                 if (res.statusCode === 301 || res.statusCode === 302) {
                     res.resume();
                     this._fetch(res.headers.location).then(resolve).catch(reject);
@@ -140,15 +197,14 @@ class VulnManager {
                 }
                 if (res.statusCode !== 200) {
                     res.resume();
-                    reject(new Error(`HTTP ${res.statusCode} fetching vuln DB`));
+                    reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
                     return;
                 }
                 let data = '';
                 res.on('data', (c) => (data += c));
                 res.on('end', () => {
                     try {
-                        const obj = JSON.parse(data);
-                        resolve(Object.values(obj));
+                        resolve(JSON.parse(data));
                     }
                     catch (e) {
                         reject(e);

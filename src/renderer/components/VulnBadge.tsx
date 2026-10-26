@@ -8,7 +8,7 @@ const SEVERITY_RANK: Record<string, number> = {
   low: 1,
 }
 
-/** Highest severity among a version's advisories, for colour + label. */
+/** Highest severity among a version's CVE advisories, for colour + label. */
 export function worstSeverity(vulns: Vulnerability[]): string {
   let worst = 'unknown'
   let rank = -1
@@ -22,26 +22,34 @@ export function worstSeverity(vulns: Vulnerability[]): string {
   return worst
 }
 
-/** Human-readable tooltip: one line per advisory with its CVEs and summary. */
-function tooltip(vulns: Vulnerability[]): string {
-  return vulns
-    .map((v) => {
-      const ids = v.cve.length ? v.cve.join(', ') : 'advisory'
-      const sev = v.severity.toUpperCase()
-      const summary = v.overview ? ` — ${v.overview}` : ''
-      return `[${sev}] ${ids}${summary}`
-    })
-    .join('\n')
+/** Tooltip line for one advisory. */
+function line(v: Vulnerability): string {
+  const tag = v.kind === 'eol' ? 'END-OF-LIFE' : v.cve.length ? v.cve.join(', ') : 'advisory'
+  const summary = v.overview ? ` — ${v.overview}` : ''
+  return `[${v.severity.toUpperCase()}] ${tag}${summary}`
 }
 
-/** Red ⚠️ pill shown next to a Node version with known security advisories. */
+/**
+ * Advisory pills for a Node version. End-of-life and CVE advisories render as
+ * separate, visually distinct pills — EOL is ⛔ (violet), CVEs are ⚠️ (red/amber
+ * by severity) — so an unsupported runtime reads differently from a patchable one.
+ */
 export function VulnBadge({ vulns }: { vulns?: Vulnerability[] }) {
   if (!vulns || vulns.length === 0) return null
-  const worst = worstSeverity(vulns)
-  const label = vulns.length === 1 ? '1 advisory' : `${vulns.length} advisories`
+  const eol = vulns.find((v) => v.kind === 'eol')
+  const cves = vulns.filter((v) => v.kind !== 'eol')
   return (
-    <div className={`version-badge vuln ${worst}`} title={tooltip(vulns)}>
-      ⚠️ {worst} · {label}
-    </div>
+    <>
+      {eol && (
+        <div className="version-badge eol" title={line(eol)}>
+          ⛔ EOL
+        </div>
+      )}
+      {cves.length > 0 && (
+        <div className={`version-badge vuln ${worstSeverity(cves)}`} title={cves.map(line).join('\n')}>
+          ⚠️ {worstSeverity(cves)} · {cves.length} CVE
+        </div>
+      )}
+    </>
   )
 }

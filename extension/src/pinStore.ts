@@ -139,6 +139,38 @@ export function isPinned(tool: ToolMeta): boolean {
   return source === 'workspace' || source === 'file'
 }
 
+/**
+ * The version this workspace *declares* via a version file or package.json,
+ * ignoring any manual pin and the global default. This is "what the project
+ * asks for", used to warn when a manual choice contradicts it. Null when the
+ * workspace declares nothing.
+ */
+export function declaredRequest(tool: ToolMeta): { request: string; file: string } | null {
+  const fromFile = readVersionFile(tool)
+  if (fromFile) return fromFile
+  if (tool.key === 'node') return readPackageJsonNode()
+  return null
+}
+
+/** True when `version` satisfies a declared `request` (same matching as resolution). */
+export function matchesRequest(tool: ToolMeta, version: string, request: string): boolean {
+  return pick([{ version, path: '' }], request, tool.key === 'node') !== null
+}
+
+/**
+ * The project's declaration when `version` does NOT satisfy it, else null —
+ * i.e. "this choice contradicts what the workspace asks for". A workspace that
+ * declares nothing never mismatches.
+ */
+export function requirementMismatch(
+  tool: ToolMeta,
+  version: string,
+): { request: string; file: string } | null {
+  const declared = declaredRequest(tool)
+  if (declared && !matchesRequest(tool, version, declared.request)) return declared
+  return null
+}
+
 // ── Version files ─────────────────────────────────────────────
 
 /** Every filename any tool reads — used to build the file watchers. */

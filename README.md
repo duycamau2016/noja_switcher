@@ -35,6 +35,7 @@ A GUI to install, switch and manage multiple **Node.js** and **JDK** versions on
 ### Security advisory scanning (Node)
 
 - **Known-CVE badges.** Installed and available Node versions are checked against the official [Node.js Security WG database](https://github.com/nodejs/security-wg/tree/main/vuln); any version with published advisories gets a red ⚠️ badge — hover for the CVE ids, severity and summary.
+- **End-of-life (EOL) badges.** Versions whose major line is past its scheduled [end-of-life](https://github.com/nodejs/Release) (Node 8, 14, 16, 18, 20, …) are flagged `EOL` — catching unsupported runtimes that the CVE database reports as "clean" simply because it no longer tracks them.
 - **Warning before switching** to a version with known advisories (highest severity + CVE ids); cancelling leaves the active version unchanged.
 - **Security audit** — a *Scan installed versions* button in the **Settings** tab reports how many installed Node versions are affected.
 - The database is fetched from GitHub and cached at `~/.nodevm/vuln-cache.json` (refreshed at most once per 24h), so scans work offline and never block the UI. JDK is unaffected.

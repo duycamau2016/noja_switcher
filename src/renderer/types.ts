@@ -29,6 +29,8 @@ export interface Vulnerability {
   severity: string
   overview?: string
   ref?: string
+  /** 'cve' for a security advisory; 'eol' for a synthetic end-of-life notice. */
+  kind?: 'cve' | 'eol'
 }
 
 /** Keyed by version string (e.g. "v22.13.0"). Safe versions are omitted. */

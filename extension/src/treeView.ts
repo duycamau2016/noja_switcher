@@ -2,9 +2,9 @@ import * as vscode from 'vscode'
 import * as path from 'path'
 import semver from 'semver'
 import { portManager, vulnManager, NODE, TOOLS, ToolMeta } from './managers'
-import { describeSource, listWithEffective, resolveTool, setManualPin } from './pinStore'
+import { describeSource, listWithEffective, resolveTool, setManualPin, requirementMismatch } from './pinStore'
 import { registerCommand, registerDisposable } from './register'
-import { worstSeverity, cveIds } from './vulnFormat'
+import { cveIds, summarize, eolNote, badgeText, hasEol } from './vulnFormat'
 import type { Vulnerability, VulnMap } from '../../src/main/vulnManager'
 
 // ── Versions view ─────────────────────────────────────────────
@@ -154,9 +154,11 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
     const vulns = node.tool.key === 'node' ? this.vulns[node.version] : undefined
     const vulnerable = !!vulns?.length
 
+    const eolOnly = vulnerable && hasEol(vulns!) && !vulns!.some((v) => v.cve.length)
+
     const item = new vscode.TreeItem(node.version, vscode.TreeItemCollapsibleState.None)
     item.description = [
-      vulnerable ? `⚠️ ${worstSeverity(vulns!)} · ${vulns!.length} CVE` : undefined,
+      vulnerable ? badgeText(vulns!) : undefined,
       pinnedHere ? (resolved.source === 'file' ? resolved.file : 'pinned') : undefined,
       node.isGlobal ? 'global' : undefined,
       // "nvm current" already says it is an nvm install — don't print both.
@@ -169,9 +171,9 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
       [
         `**${node.version}**`,
         node.path,
-        vulnerable
-          ? `⚠️ **${vulns!.length} known security ${vulns!.length === 1 ? 'advisory' : 'advisories'}** (highest: ${worstSeverity(vulns!)})\n\n${cveIds(vulns!)}`
-          : '',
+        vulnerable ? `⚠️ **${summarize(vulns!)}**` : '',
+        vulnerable ? eolNote(vulns!) : '',
+        vulnerable && vulns!.some((v) => v.cve.length) ? cveIds(vulns!) : '',
         pinnedHere ? `_Pinned for this workspace (${describeSource(resolved)})._` : '',
         node.isGlobal ? '_Also the machine-wide default._' : '',
         node.origin === 'nvm'
@@ -188,9 +190,11 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
       node.isCurrent ? (pinnedHere ? 'pinned' : 'pass-filled') : node.isGlobal ? 'circle-filled' : 'circle-large-outline',
       node.isCurrent
         ? new vscode.ThemeColor('charts.green')
-        : vulnerable
-          ? new vscode.ThemeColor('charts.red')
-          : undefined,
+        : eolOnly
+          ? new vscode.ThemeColor('charts.purple')
+          : vulnerable
+            ? new vscode.ThemeColor('charts.red')
+            : undefined,
     )
 
     // Uninstall is only offered where it can succeed and where it would not rip
@@ -328,8 +332,9 @@ export class InstallProvider implements vscode.TreeDataProvider<RemoteNode> {
 
     const item = new vscode.TreeItem(node.version, vscode.TreeItemCollapsibleState.None)
     const vulnerable = !!node.vulns?.length
+    const eolOnly = vulnerable && hasEol(node.vulns!) && !node.vulns!.some((v) => v.cve.length)
     const tags = [
-      vulnerable ? `⚠️ ${worstSeverity(node.vulns!)} · ${node.vulns!.length} CVE` : undefined,
+      vulnerable ? badgeText(node.vulns!) : undefined,
       node.lts ? `LTS ${node.lts}` : undefined,
       node.date,
     ].filter(Boolean)
@@ -337,9 +342,9 @@ export class InstallProvider implements vscode.TreeDataProvider<RemoteNode> {
     item.tooltip = new vscode.MarkdownString(
       [
         `**${node.version}**`,
-        vulnerable
-          ? `⚠️ **${node.vulns!.length} known security ${node.vulns!.length === 1 ? 'advisory' : 'advisories'}** (highest: ${worstSeverity(node.vulns!)})\n\n${cveIds(node.vulns!)}`
-          : '',
+        vulnerable ? `⚠️ **${summarize(node.vulns!)}**` : '',
+        vulnerable ? eolNote(node.vulns!) : '',
+        vulnerable && node.vulns!.some((v) => v.cve.length) ? cveIds(node.vulns!) : '',
         node.lts ? `LTS: ${node.lts}` : 'Current release (not LTS)',
         `Released: ${node.date || 'unknown'}`,
         '',
@@ -352,9 +357,11 @@ export class InstallProvider implements vscode.TreeDataProvider<RemoteNode> {
       node.installed ? 'pass-filled' : 'cloud-download',
       node.installed
         ? new vscode.ThemeColor('charts.green')
-        : vulnerable
-          ? new vscode.ThemeColor('charts.red')
-          : undefined,
+        : eolOnly
+          ? new vscode.ThemeColor('charts.purple')
+          : vulnerable
+            ? new vscode.ThemeColor('charts.red')
+            : undefined,
     )
     item.contextValue = node.installed ? 'nvmRemote-installed' : 'nvmRemote'
 
@@ -578,20 +585,29 @@ export function registerTreeViews(context: vscode.ExtensionContext, onChanged: (
   // shared junction, so a second window on another repo is unaffected.
   registerCommand(context, 'nodeversions.pinVersion', async (node: VersionNode) => {
     if (!node || node.kind !== 'version') return
-    // Warn before pinning a Node version with known advisories (default click action).
+    // Warn before pinning a Node version that contradicts the project's declared
+    // requirement, or that has known advisories / is end-of-life.
     if (node.tool.key === 'node') {
-      const hits = (await vulnManager.scan([node.version]))[node.version]
-      if (hits?.length) {
-        const proceed = 'Pin anyway'
-        const choice = await vscode.window.showWarningMessage(
-          `${node.version} has ${hits.length} known security ${hits.length === 1 ? 'advisory' : 'advisories'}.`,
-          {
-            modal: true,
-            detail: `Highest severity: ${worstSeverity(hits)}.\n${cveIds(hits)}\n\nConsider a patched release instead.`,
-          },
-          proceed,
-        )
-        if (choice !== proceed) return
+      const mism = requirementMismatch(node.tool, node.version)
+      const hits = (await vulnManager.scan([node.version]))[node.version] ?? []
+      const cves = hits.filter((h) => h.kind !== 'eol')
+      // EOL alone only shows a badge/icon — it never interrupts with a modal.
+      // Only an active-CVE or a project mismatch is worth a confirmation.
+      if (mism || cves.length) {
+        const detail = [
+          mism
+            ? `This workspace asks for Node "${mism.request}" (${mism.file}); ${node.version} does not satisfy it.`
+            : '',
+          cves.some((h) => h.cve.length) ? `CVEs: ${cveIds(cves)}` : '',
+          'Pin it anyway?',
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+        const title = mism
+          ? `${node.version} doesn't match this project's Node requirement`
+          : `${node.version}: ${summarize(cves)}`
+        const choice = await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Pin anyway')
+        if (choice !== 'Pin anyway') return
       }
     }
     // Record the path, not just the version: the same version string can name

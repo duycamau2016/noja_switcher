@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { nodeManager, jdkManager, portManager, vulnManager, NODE, JDK, ToolMeta } from './managers'
-import { listWithEffective, resolveTool, setManualPin, versionAtPath } from './pinStore'
-import { worstSeverity, cveIds } from './vulnFormat'
+import { listWithEffective, resolveTool, setManualPin, versionAtPath, requirementMismatch } from './pinStore'
+import { cveIds, summarize } from './vulnFormat'
 
 /** Fired after any action that can change which version is active. */
 export type OnChanged = () => void
@@ -232,19 +232,26 @@ export class NvmPanel {
   private async useNode(target: string): Promise<{ success: boolean; error?: string }> {
     const version = versionAtPath(NODE, target)
     if (version) {
-      const hits = (await vulnManager.scan([version]))[version]
-      if (hits && hits.length > 0) {
+      const mism = requirementMismatch(NODE, version)
+      const hits = (await vulnManager.scan([version]))[version] ?? []
+      const cves = hits.filter((h) => h.kind !== 'eol')
+      // EOL alone only shows a badge/icon — only an active CVE or a project
+      // mismatch raises a confirmation modal.
+      if (mism || cves.length) {
         const proceed = 'Switch anyway'
-        const choice = await vscode.window.showWarningMessage(
-          `${version} has ${hits.length} known security ${hits.length === 1 ? 'advisory' : 'advisories'}.`,
-          {
-            modal: true,
-            detail:
-              `Highest severity: ${worstSeverity(hits)}.\n${cveIds(hits)}\n\n` +
-              `Consider switching to a patched release instead.`,
-          },
-          proceed,
-        )
+        const detail = [
+          mism
+            ? `This workspace asks for Node "${mism.request}" (${mism.file}); ${version} does not satisfy it.`
+            : '',
+          cves.some((h) => h.cve.length) ? `CVEs: ${cveIds(cves)}` : '',
+          'Switch to it anyway?',
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+        const title = mism
+          ? `${version} doesn't match this project's Node requirement`
+          : `${version}: ${summarize(cves)}`
+        const choice = await vscode.window.showWarningMessage(title, { modal: true, detail }, proceed)
         if (choice !== proceed) return { success: false, error: 'Cancelled.' }
       }
     }

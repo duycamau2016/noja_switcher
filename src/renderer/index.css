@@ -183,11 +183,14 @@ body {
 .version-badge.node { background: var(--accent-dim); color: var(--accent); }
 .version-badge.java { background: #3a2a1e; color: #fb923c; }
 
-/* Security advisory badge — red by default, amber for lower severities. */
+/* CVE advisory badge — red by default, amber for lower severities. */
 .version-badge.vuln { background: #3a1e1e; color: var(--danger); cursor: help; text-transform: capitalize; }
 .version-badge.vuln.medium,
 .version-badge.vuln.moderate,
 .version-badge.vuln.low { background: #3a2f1e; color: var(--warning); }
+
+/* End-of-life badge — violet, distinct from the red CVE badge. */
+.version-badge.eol { background: #2b2640; color: #c4b5fd; cursor: help; text-transform: uppercase; letter-spacing: 0.4px; }
 
 /* ── Ports toolbar ────────────────────────────────────────── */
 .ports-toolbar {
