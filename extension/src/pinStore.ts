@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs'
 import * as path from 'path'
+import semver from 'semver'
 import { TOOLS, Tool, ToolMeta } from './managers'
 
 // Why this module exists
@@ -65,6 +66,14 @@ function compute(tool: ToolMeta): Resolved {
 
   const declared = readVersionFile(tool)
   if (declared) return { ...fromRequest(tool, declared.request, 'file'), file: declared.file }
+
+  // Node-only: fall back to the version the project declares in package.json
+  // (devEngines.runtime, then engines.node). These are usually semver *ranges*,
+  // resolved to the newest installed version that satisfies them in pick().
+  if (tool.key === 'node') {
+    const pkg = readPackageJsonNode()
+    if (pkg) return { ...fromRequest(tool, pkg.request, 'file'), file: pkg.file }
+  }
 
   // Unpinned workspaces keep the pre-pinning behaviour exactly: follow the
   // global `current` junction, whatever the desktop app last pointed it at.
@@ -163,6 +172,54 @@ function firstMeaningfulLine(raw: string): string | null {
   return null
 }
 
+/**
+ * The Node version a project's package.json asks for. Prefers `devEngines.runtime`
+ * (npm's explicit dev-environment runtime) over `engines.node` (a publish-time
+ * constraint); both are typically semver ranges, matched in pick(). Gated behind
+ * the same `useVersionFiles` setting as .nvmrc — it is the same idea: honour what
+ * the repo declares. Only consulted for Node; `packageManager` is deliberately
+ * ignored, as it names the package manager, not the Node version.
+ */
+function readPackageJsonNode(): { request: string; file: string } | null {
+  if (!config().get<boolean>('useVersionFiles', true)) return null
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== 'file') continue
+    let pkg: unknown
+    try {
+      pkg = JSON.parse(fs.readFileSync(path.join(folder.uri.fsPath, 'package.json'), 'utf8'))
+    } catch {
+      continue // no package.json here, or it is not valid JSON
+    }
+
+    const runtime = nodeRuntimeVersion((pkg as { devEngines?: { runtime?: unknown } })?.devEngines?.runtime)
+    if (runtime) return { request: runtime, file: 'package.json devEngines.runtime' }
+
+    const engines = (pkg as { engines?: { node?: unknown } })?.engines?.node
+    if (typeof engines === 'string' && engines.trim()) {
+      return { request: engines.trim(), file: 'package.json engines.node' }
+    }
+  }
+  return null
+}
+
+/** Extract the `node` runtime version from a devEngines.runtime value (object or array). */
+function nodeRuntimeVersion(runtime: unknown): string | null {
+  const entries = Array.isArray(runtime) ? runtime : runtime ? [runtime] : []
+  for (const entry of entries) {
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      (entry as { name?: unknown }).name === 'node' &&
+      typeof (entry as { version?: unknown }).version === 'string'
+    ) {
+      const v = (entry as { version: string }).version.trim()
+      if (v) return v
+    }
+  }
+  return null
+}
+
 // ── Matching a request against what is installed ──────────────
 
 /** `.nvmrc` aliases that mean "whatever the newest install is". */
@@ -183,10 +240,11 @@ function matchInstalled(tool: ToolMeta, request: string): Installed | null {
   // request that matches nothing there is worth listInstalled(), which shells
   // out to `where node` / `which -a node` and runs `node --version` per
   // candidate — too slow to sit on the activation path by default.
-  return pick(listLocal(tool), request) ?? pick(listExternal(tool), request)
+  const isNode = tool.key === 'node'
+  return pick(listLocal(tool), request, isNode) ?? pick(listExternal(tool), request, isNode)
 }
 
-function pick(installed: Installed[], request: string): Installed | null {
+function pick(installed: Installed[], request: string, isNode: boolean): Installed | null {
   if (installed.length === 0) return null
 
   const req = normalize(request)
@@ -209,7 +267,32 @@ function pick(installed: Installed[], request: string): Installed | null {
     if (byMajor) return byMajor
   }
 
+  // Node only: a semver *range* (package.json engines.node style, e.g. ">=18",
+  // "^20.10 || 22") picks the newest installed version that satisfies it. Java
+  // versions are not semver, so this stays off for the JDK.
+  if (isNode) {
+    const bySemver = pickSatisfying(installed, request)
+    if (bySemver) return bySemver
+  }
+
   return null
+}
+
+/** Newest installed version satisfying a semver range, or null if none / not a range. */
+function pickSatisfying(installed: Installed[], range: string): Installed | null {
+  if (!semver.validRange(range, { loose: true })) return null
+  const candidates = installed
+    .map((v) => ({ v, clean: semver.coerce(normalize(v.version))?.version }))
+    .filter((x): x is { v: Installed; clean: string } =>
+      !!x.clean && semver.satisfies(x.clean, range, { includePrerelease: true, loose: true }),
+    )
+  if (candidates.length === 0) return null
+  const best = semver.maxSatisfying(
+    candidates.map((c) => c.clean),
+    range,
+    { includePrerelease: true, loose: true },
+  )
+  return (candidates.find((c) => c.clean === best) ?? candidates[0]).v
 }
 
 /** Managed installs plus nvm's, newest first — no subprocesses. */

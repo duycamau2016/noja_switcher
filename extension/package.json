@@ -2,7 +2,7 @@
   "name": "nodeversions",
   "displayName": "Node & JDK Version Manager",
   "description": "Switch Node.js and JDK versions per VS Code workspace",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "publisher": "yudaliot",
   "license": "ISC",
   "icon": "icon.png",

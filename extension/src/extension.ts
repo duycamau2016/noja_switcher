@@ -78,7 +78,9 @@ function watchVersionFiles(context: vscode.ExtensionContext, onChanged: () => vo
   for (const watcher of fileWatchers) watcher.dispose()
   fileWatchers = []
 
-  const pattern = `{${VERSION_FILE_NAMES.join(',')}}`
+  // package.json is watched too: engines.node / devEngines.runtime are read as a
+  // version source, so editing it must re-resolve like a .nvmrc change does.
+  const pattern = `{${VERSION_FILE_NAMES.join(',')},package.json}`
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     if (folder.uri.scheme !== 'file') continue
     const watcher = vscode.workspace.createFileSystemWatcher(

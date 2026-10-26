@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.2
+
+### Added
+
+- **Read the Node version from `package.json`.** When a workspace has no
+  `.nvmrc` / `.node-version`, the extension now resolves the Node version from
+  `package.json` — `devEngines.runtime` (preferred) then `engines.node`. These
+  are usually semver *ranges* (`">=18"`, `"^20.10 || 22"`), resolved to the
+  newest installed version that satisfies them. Honoured under the existing
+  `nodeversions.useVersionFiles` setting, below the dedicated version files in
+  precedence. `packageManager` is intentionally ignored — it names the package
+  manager, not the Node version.
+- **One-click install when the requested version is missing.** If the declared
+  range matches nothing installed, the Versions view shows an *Install a version
+  for "&lt;range&gt;"* item; clicking it downloads the newest release that
+  satisfies the range and the workspace picks it up.
+
 ## 1.4.1
 
 ### Added

@@ -27,7 +27,7 @@ With **Node & JDK Version Manager**, you can pin a runtime to a VS Code workspac
 
 - ⚡ Switch Node.js versions directly from VS Code
 - 📁 Pin Node.js and JDK versions per workspace
-- 📄 Support `.nvmrc`, `.node-version`, and `.java-version`
+- 📄 Support `.nvmrc`, `.node-version`, `.java-version`, and `package.json` (`engines.node` / `devEngines.runtime`)
 - 💻 Automatically apply the selected runtime to new integrated terminals
 - ☕ Manage JDK versions alongside Node.js
 - 🔌 Find and manage listening Node.js and Java ports

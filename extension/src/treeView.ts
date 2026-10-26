@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import * as path from 'path'
-import { portManager, vulnManager, TOOLS, ToolMeta } from './managers'
+import semver from 'semver'
+import { portManager, vulnManager, NODE, TOOLS, ToolMeta } from './managers'
 import { describeSource, listWithEffective, resolveTool, setManualPin } from './pinStore'
 import { registerCommand, registerDisposable } from './register'
 import { worstSeverity, cveIds } from './vulnFormat'
@@ -8,9 +9,10 @@ import type { Vulnerability, VulnMap } from '../../src/main/vulnManager'
 
 // ── Versions view ─────────────────────────────────────────────
 
-/** A tool header ("Node", "JDK") or one installed version beneath it. */
+/** A tool header, an installed version, or a "requested but missing" install prompt. */
 type VersionNode =
   | { kind: 'tool'; tool: ToolMeta }
+  | { kind: 'install-hint'; tool: ToolMeta; request: string }
   | {
       kind: 'version'
       tool: ToolMeta
@@ -70,7 +72,7 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
       }
     }
 
-    return installed.map((v) => ({
+    const nodes = installed.map((v) => ({
       kind: 'version' as const,
       tool: node.tool,
       version: v.version,
@@ -81,11 +83,41 @@ export class VersionsProvider implements vscode.TreeDataProvider<VersionNode> {
       origin: v.origin,
       originActive: v.originActive,
     }))
+
+    // The workspace asks for a Node version (e.g. package.json engines) that no
+    // install matches — offer a one-click install of a release that satisfies it.
+    if (node.tool.key === 'node') {
+      const unresolved = resolveTool(node.tool).unresolved
+      if (unresolved) {
+        return [{ kind: 'install-hint' as const, tool: node.tool, request: unresolved }, ...nodes]
+      }
+    }
+    return nodes
   }
 
   getTreeItem(node: VersionNode): vscode.TreeItem {
     if (node.kind === 'tool') return this.toolItem(node.tool)
+    if (node.kind === 'install-hint') return this.installHintItem(node)
     return this.versionItem(node)
+  }
+
+  private installHintItem(node: Extract<VersionNode, { kind: 'install-hint' }>): vscode.TreeItem {
+    const item = new vscode.TreeItem(
+      `Install a version for "${node.request}"`,
+      vscode.TreeItemCollapsibleState.None,
+    )
+    item.description = 'required here — not installed'
+    item.iconPath = new vscode.ThemeIcon('cloud-download', new vscode.ThemeColor('charts.yellow'))
+    item.tooltip = new vscode.MarkdownString(
+      `This workspace requests Node \`${node.request}\`, which no installed version matches.\n\n_Click to download and install the newest release that satisfies it._`,
+    )
+    item.command = {
+      command: 'nodeversions.installForWorkspace',
+      title: 'Install a matching Node version',
+      arguments: [node.request],
+    }
+    item.contextValue = 'nvmInstallHint'
+    return item
   }
 
   private toolItem(tool: ToolMeta): vscode.TreeItem {
@@ -388,6 +420,18 @@ function remoteInstallPath(node: Extract<RemoteNode, { kind: 'remote' }>): strin
   return path.join(node.tool.vm.versionsDir, node.version)
 }
 
+/** Newest downloadable release whose coerced version satisfies a semver range. */
+function newestSatisfying(remote: Array<{ version: string }>, range: string): string | null {
+  if (!semver.validRange(range, { loose: true })) return null
+  const byClean = new Map<string, string>()
+  for (const r of remote) {
+    const clean = semver.coerce(r.version.replace(/^v/, ''))?.version
+    if (clean) byClean.set(clean, r.version)
+  }
+  const best = semver.maxSatisfying([...byClean.keys()], range, { includePrerelease: true, loose: true })
+  return best ? byClean.get(best)! : null
+}
+
 /** Tool headers carry `nvmTool-<key>-…`; recover the tool from the context value. */
 function toolFromNode(node: unknown): ToolMeta | null {
   const tool = (node as { tool?: ToolMeta } | undefined)?.tool
@@ -463,6 +507,69 @@ export function registerTreeViews(context: vscode.ExtensionContext, onChanged: (
         result.error ?? `Failed to install ${node.tool.noun} ${node.version}.`,
       )
     }
+  })
+
+  // Install a release that satisfies the workspace's requested Node version —
+  // e.g. a package.json engines range with nothing matching installed yet.
+  registerCommand(context, 'nodeversions.installForWorkspace', async (request?: string) => {
+    const req = request ?? resolveTool(NODE).unresolved
+    if (!req) {
+      vscode.window.showInformationMessage('This workspace already uses an installed Node version.')
+      return
+    }
+
+    let remote: Array<{ version: string }>
+    try {
+      remote = await NODE.vm.listRemote()
+    } catch (err: unknown) {
+      vscode.window.showErrorMessage(
+        `Could not fetch the Node release list: ${String((err as Error)?.message ?? err)}`,
+      )
+      return
+    }
+
+    const target = newestSatisfying(remote, req)
+    if (!target) {
+      vscode.window.showWarningMessage(
+        `No downloadable Node release matches "${req}". Install one manually from the Install New view.`,
+      )
+      return
+    }
+
+    const proceed = `Install ${target}`
+    const choice = await vscode.window.showInformationMessage(
+      `This workspace requests Node "${req}", which isn't installed.`,
+      { detail: `Install ${target} — the newest release that satisfies it — and use it here?`, modal: true },
+      proceed,
+    )
+    if (choice !== proceed) return
+
+    const result = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Installing Node ${target}`, cancellable: false },
+      (progress) => {
+        let last = 0
+        return NODE.vm.install(target, (p: number) => {
+          const step = Math.max(0, p - last)
+          last = p
+          progress.report({ increment: step, message: `${p}%` })
+        })
+      },
+    )
+
+    if (!result.success) {
+      vscode.window.showErrorMessage(result.error ?? `Failed to install Node ${target}.`)
+      return
+    }
+
+    install.invalidate()
+    onChanged()
+    // A version-file range now resolves on its own; a manual pin for a specific
+    // version that we couldn't match needs the fresh install pinned explicitly.
+    if (resolveTool(NODE).unresolved) {
+      await setManualPin('node', { version: target, path: path.join(NODE.vm.versionsDir, target) })
+      onChanged()
+    }
+    vscode.window.showInformationMessage(`Node ${target} installed. Open a new terminal to pick it up.`)
   })
 
   registerCommand(context, 'nodeversions.refreshRemote', () => install.invalidate())
